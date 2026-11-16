@@ -5,8 +5,9 @@ Signed and encrypted firmware packages, A/B slots with trial boots, power-fail-s
 state handling and hardware-backed (simulated) anti-rollback, with a test suite
 that attacks it.
 
-> Educational reference implementation, **not production-ready**. Everything runs on a
-> host simulator; there is no hardware port yet. See [Limitations](#limitations-and-non-goals).
+> Educational reference implementation, **not production-ready**. It runs on a host simulator
+> and, as a self-test, on an emulated Cortex-M3 (QEMU); there is no real-hardware port.
+> See [Limitations](#limitations-and-non-goals).
 
 ## What it does
 
@@ -86,6 +87,19 @@ cmake --preset host-fuzz && cmake --build --preset host-fuzz
 python3 tools/mutation_check.py
 ```
 
+Cortex-M3 self-test under QEMU (`qemu-system-arm` ≥ 6.2, `gcc-arm-none-eabi`, `libnewlib-arm-none-eabi`):
+
+```sh
+sudo apt-get install qemu-system-arm gcc-arm-none-eabi libnewlib-arm-none-eabi
+cmake --preset qemu-mps2 && cmake --build --preset qemu-mps2 && ctest --preset qemu-mps2
+python3 tools/map_sizes.py ~/sb-build/qemu-mps2/port/qemu_mps2/sb_selftest.map   # size report
+```
+
+The firmware uses the machine's memory map as printed by QEMU (`info mtree`): code in the
+4 MiB SSRAM1 boot alias at `0x0`, data, heap and a 64 KiB stack in SSRAM2/3 at `0x20000000`.
+Console output and the exit status go through ARM semihosting. Test packages are generated
+at build time with fresh test keys that never leave the build directory.
+
 ## Verification
 
 Measured on this repository (WSL2, Ubuntu 22.04, clang 14 / GCC 11):
@@ -101,7 +115,8 @@ Measured on this repository (WSL2, Ubuntu 22.04, clang 14 / GCC 11):
 | Fuzzing | 5 min each, no findings: parser 132,733 runs, full update path 8,239 runs (invariant: the device only ever boots an image the vendor signed) |
 | Valgrind | 0 errors, 0 leaks on the end-to-end scenarios |
 | Static analysis | clang-tidy (`bugprone`, `cert`, `clang-analyzer`, `performance`) clean on `boot/`, `hal/`, `tools/sim/` |
-| Code size | 4.8 KB of `.text` for the `boot/` core compiled with `-Os -mcpu=cortex-m3` (GCC 15.3, compile-only; Mbed TLS and the HAL are not included, nothing was linked or run on ARM). `sb_ctx_t` holds two 4 KiB sector buffers |
+| On target (Cortex-M3, QEMU `mps2-an385`) | The unmodified `boot/` core, cross-compiled with `arm-none-eabi-gcc` and run under QEMU against the real Mbed TLS: install, OTA update, three attacks and a power cut at each of 22 flash operations, 117 checks, 0 failed (`ctest --preset qemu-mps2`, ~1 s). Removing the rollback check makes it fail with exit status 1 |
+| Linked size (`-Os`, Cortex-M3) | `boot/` core 4.9 KB flash; Mbed TLS 128 KB; newlib + semihosting 35 KB; whole self-test ELF 189 KB flash, 108 KB RAM (mostly the self-test's own flash model and buffers). Peak heap 18.9 KB, all of it the crypto library's. `sb_ctx_t` holds two 4 KiB sector buffers |
 | Coverage | 90.1 % lines, 73.7 % branches of `boot/` + `hal/` (remaining branches are mostly defensive error paths) |
 
 The fuzzing runs are short; they show the harness works, not that the code is exhaustively
@@ -111,14 +126,17 @@ clang-tidy and a 60 s fuzz run on every push; it has not run yet, so there is no
 ## Layout
 
 ```
-boot/    bootloader core (platform independent, no dynamic allocation)
+boot/    bootloader core (platform independent; its own code never allocates)
            crypto_port  PSA wrappers: the only file that touches the crypto library
            manifest     parser and signature verification
            state        CRC-protected boot state, two alternating copies
            update       staging API, verified in-place installation
            boot         reset-time policy: install, trial, revert, recover
 hal/     flash model with power-loss injection, OTP model, HAL interface
-tools/   sentinel_sign.py (signer), sim/ (CLI device), mutation_check.py
+port/    qemu_mps2/: Cortex-M3 startup, linker script, Mbed TLS bare-metal config, self-test
+cmake/   arm-none-eabi toolchain file
+tools/   sentinel_sign.py (signer), sim/ (CLI device), mutation_check.py,
+         gen_fixture.py (QEMU test packages), map_sizes.py (size report)
 tests/   unit, power-fail, fuzz, interop, Wycheproof vectors
 docs/    image format, threat model
 ```
@@ -133,7 +151,9 @@ crypto library changes, `boot/crypto_port.c`.
 - Verified-then-executed images are not protected against a flash rewrite in between (TOCTOU).
 - One root key, no rotation or revocation. Static device key, so no forward secrecy toward the device.
 - An interrupted install is abandoned, not resumed; the package must be downloaded again.
-- Host simulator only: no Cortex-M port or linked firmware, no real flash timing; the code size above is a compile-only figure.
+- Emulator only: the Cortex-M3 build runs in QEMU, not on silicon. Flash and OTP are RAM models, so there is no real flash driver, timing or wear behaviour, and no application is chain-loaded.
+- The emulated board has no RNG: `port/qemu_mps2/demo_entropy.c` is a fixed-seed generator and its output is predictable. It is acceptable only because the self-test merely verifies and decrypts with fixed test keys; a real port needs a TRNG.
+- The crypto library allocates from the heap (18.9 KB peak on target); only the core's own code is allocation-free.
 - Not audited, not certified, not for production.
 
 ## License

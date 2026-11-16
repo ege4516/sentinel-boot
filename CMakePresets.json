@@ -48,6 +48,18 @@
       }
     },
     {
+      "name": "qemu-mps2",
+      "inherits": "base",
+      "displayName": "Cortex-M3 cross build for QEMU mps2-an385",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel",
+        "SB_TARGET_QEMU": "ON",
+        "SB_BUILD_TESTS": "OFF",
+        "SB_BUILD_TOOLS": "OFF"
+      }
+    },
+    {
       "name": "host-coverage",
       "inherits": "base",
       "displayName": "Host, GCC, coverage",
@@ -65,11 +77,13 @@
     { "name": "host-debug", "configurePreset": "host-debug" },
     { "name": "host-asan", "configurePreset": "host-asan" },
     { "name": "host-fuzz", "configurePreset": "host-fuzz" },
-    { "name": "host-coverage", "configurePreset": "host-coverage" }
+    { "name": "host-coverage", "configurePreset": "host-coverage" },
+    { "name": "qemu-mps2", "configurePreset": "qemu-mps2" }
   ],
   "testPresets": [
     { "name": "host-debug", "configurePreset": "host-debug", "output": { "outputOnFailure": true } },
     { "name": "host-asan", "configurePreset": "host-asan", "output": { "outputOnFailure": true } },
-    { "name": "host-coverage", "configurePreset": "host-coverage", "output": { "outputOnFailure": true } }
+    { "name": "host-coverage", "configurePreset": "host-coverage", "output": { "outputOnFailure": true } },
+    { "name": "qemu-mps2", "configurePreset": "qemu-mps2", "output": { "outputOnFailure": true } }
   ]
 }

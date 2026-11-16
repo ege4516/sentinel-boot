@@ -1,7 +1,8 @@
 # Threat model
 
-Scope: the boot and update path of a Cortex-M class device. The code runs on a
-host simulator; where real hardware would differ, that is stated.
+Scope: the boot and update path of a Cortex-M class device. The code runs on a host
+simulator and on an emulated Cortex-M3 (QEMU); where real hardware would differ, that is
+stated.
 
 ## Assets
 
@@ -32,7 +33,7 @@ host simulator; where real hardware would differ, that is stated.
 | Re-labelled ciphertext (new version, same bytes) | Header bound into the AEAD as associated data | `BootReject.HeaderIsBoundToCiphertextAsAad` |
 | Rollback to a signed old release | `security_counter` >= OTP counter; counter raised only after confirmation | `BootReject.RollbackToOlderSecurityCounter` |
 | Package meant for another device | Image key derived from the device key; tag fails | `BootReject.PackageEncryptedForAnotherDevice` |
-| Parser exploitation | Fixed layout, explicit LE reads, size bounded by slot, reserved bytes zero, no dynamic allocation; libFuzzer + ASan/UBSan | `fuzz_manifest`, `fuzz_update`, `Manifest.EnforcesImageSizeBounds` |
+| Parser exploitation | Fixed layout, explicit LE reads, size bounded by slot, reserved bytes zero, no allocation in the core's own code; libFuzzer + ASan/UBSan | `fuzz_manifest`, `fuzz_update`, `Manifest.EnforcesImageSizeBounds` |
 | Tampering with flash at rest | Signature and plaintext digest re-verified on every boot | `Boot.CorruptedActiveImageFallsBackToConfirmedSlot`, `TamperedManifestOfInstalledImageRefusesToBoot` |
 | Bricking by power loss | Two CRC-protected state copies written alternately; erase-before-program; unconfirmed images revert | `PowerFail.*` (cut at every flash operation, 43 cut points in the update life cycle) |
 | Bricking by a bad update | Trial boots; a trial slot reverts if never confirmed; the fallback slot is protected while a trial runs | `Boot.UnconfirmedUpdateRevertsAfterTrialsExpire`, `UpdateIsRefusedWhileRunningImageIsOnTrial` |
@@ -90,5 +91,7 @@ requires the suite to fail; all 19 mutations are detected.
   a counter below the OTP value, or a modified image, because signature, counter and
   plaintext digest are re-verified from the slot contents on every boot. Authenticating
   the record (MAC under a device-unique key) is future work.
-- **Not tested on hardware.** Everything runs on a host simulator. There is no
-  Cortex-M port yet (the core compiles cleanly for Cortex-M3, but was never linked or run).
+- **Not tested on hardware.** The core runs on a host simulator and, as a self-test, on an
+  emulated Cortex-M3 (QEMU), always against RAM models of flash and OTP. There is no
+  real flash driver, no real OTP and no hardware RNG; the emulator's entropy source is a
+  deterministic stub.

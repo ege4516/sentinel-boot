@@ -78,3 +78,19 @@ jobs:
           mkdir -p /tmp/corpus-update
           ~/sb-build/host-fuzz/tests/fuzz/fuzz_update -max_total_time=60 -max_len=6000 \
             /tmp/corpus-update tests/fuzz/corpus/update
+
+  qemu-cortex-m3:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake qemu-system-arm gcc-arm-none-eabi             libnewlib-arm-none-eabi python3-pip
+          python3 -m pip install cryptography
+      - run: cmake --preset qemu-mps2
+      - run: cmake --build --preset qemu-mps2
+      - name: Run the self-test on an emulated Cortex-M3
+        run: ctest --preset qemu-mps2
+      - name: Size report
+        run: python3 tools/map_sizes.py ~/sb-build/qemu-mps2/port/qemu_mps2/sb_selftest.map

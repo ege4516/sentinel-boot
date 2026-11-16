@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "hal/flash_sim.h"
 
-#include <stdio.h>
 #include <string.h>
 
 static int in_range(const sb_flash_sim_t *sim, uint32_t off, size_t len)
@@ -102,30 +101,4 @@ void sb_flash_sim_power_cycle(sb_flash_sim_t *sim)
     sim->powered_off = 0;
     sim->fail_at = SB_FLASH_SIM_NO_FAULT;
     sim->op_count = 0;
-}
-
-int sb_flash_sim_save(const sb_flash_sim_t *sim, const char *path)
-{
-    FILE *f = fopen(path, "wb");
-    size_t n;
-    if (f == NULL) {
-        return -1;
-    }
-    n = fwrite(sim->mem, 1, sim->size, f);
-    if (fclose(f) != 0 || n != sim->size) {
-        return -1;
-    }
-    return 0;
-}
-
-int sb_flash_sim_load(sb_flash_sim_t *sim, const char *path)
-{
-    FILE *f = fopen(path, "rb");
-    size_t n;
-    if (f == NULL) {
-        return -1;
-    }
-    n = fread(sim->mem, 1, sim->size, f);
-    (void)fclose(f);
-    return n == sim->size ? 0 : -1;
 }

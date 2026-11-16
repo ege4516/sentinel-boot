@@ -1,0 +1,19 @@
+build/
+out/
+*.o
+*.a
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+compile_commands.json
+# Never commit key material or simulator state
+*.pem
+*.key
+*.flash
+*.otp
+/examples/work/
+crash-*
+leak-*
+oom-*
+timeout-*

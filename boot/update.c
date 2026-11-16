@@ -58,7 +58,7 @@ sb_err_t sb_update_write(sb_ctx_t *ctx, uint32_t pkg_off, const uint8_t *data, s
     if (ctx == NULL || (data == NULL && len != 0)) {
         return SB_ERR_PARAM;
     }
-    max_pkg = SB_MANIFEST_LEN + sb_max_image_size(ctx);
+    max_pkg = SB_HEADER_LEN + sb_max_image_size(ctx);
     if (len > max_pkg || pkg_off > max_pkg - (uint32_t)len) {
         return SB_ERR_RANGE;
     }
@@ -74,15 +74,15 @@ sb_err_t sb_update_write(sb_ctx_t *ctx, uint32_t pkg_off, const uint8_t *data, s
     while (len != 0) {
         uint32_t dst;
         size_t n = len;
-        if (pkg_off < SB_MANIFEST_LEN) {
-            /* Manifest bytes go to the header sector. */
+        if (pkg_off < SB_HEADER_LEN) {
+            /* Manifest and proof block go to the header sector. */
             dst = ctx->layout.slot_off[target] + pkg_off;
-            if (n > SB_MANIFEST_LEN - pkg_off) {
-                n = SB_MANIFEST_LEN - pkg_off;
+            if (n > SB_HEADER_LEN - pkg_off) {
+                n = SB_HEADER_LEN - pkg_off;
             }
         } else {
             /* Ciphertext goes to the image area. */
-            dst = sb_slot_image_off(ctx, target) + (pkg_off - SB_MANIFEST_LEN);
+            dst = sb_slot_image_off(ctx, target) + (pkg_off - SB_HEADER_LEN);
         }
         if (ctx->flash->write(ctx->flash->dev, dst, data, n) != 0) {
             return SB_ERR_FLASH;

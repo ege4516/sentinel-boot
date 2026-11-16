@@ -161,7 +161,7 @@ protected:
 TEST_F(BootReject, TamperedCiphertext)
 {
     Bytes pkg = dev->package(kV2, 2, img2);
-    pkg[SB_MANIFEST_LEN + 5000] ^= 0x01;
+    pkg[SB_HEADER_LEN + 5000] ^= 0x01;
     expect_rejected(pkg, SB_ERR_DIGEST);
 }
 
@@ -182,7 +182,8 @@ TEST_F(BootReject, TamperedManifestField)
 TEST_F(BootReject, SignedByAttackerKey)
 {
     Bytes pkg = dev->package(kV2, 2, img2);
-    resign(pkg, generate_p256());
+    sbtest::resign(pkg, generate_p256());
+    relog(pkg, dev->log()); // the log accepts anything; the root signature must still fail
     expect_rejected(pkg, SB_ERR_SIGNATURE);
 }
 
@@ -195,7 +196,7 @@ TEST_F(BootReject, OversizedImageSizeField)
 {
     Bytes pkg = dev->package(kV2, 2, img2);
     put_le32(pkg, SB_MF_OFF_IMAGE_SIZE, 0x7FFFFFFF);
-    resign(pkg, dev->keys().root); // even a validly signed manifest is bounded
+    dev->resign(pkg); // even a validly signed and logged manifest is bounded
     expect_rejected(pkg, SB_ERR_FORMAT);
 }
 
@@ -222,7 +223,7 @@ TEST_F(BootReject, PackageEncryptedForAnotherDevice)
     spec.fw_version = kV2;
     spec.security_counter = 2;
     spec.image = img2;
-    Bytes pkg = make_package(spec, dev->keys().root, generate_p256().pub);
+    Bytes pkg = make_package(spec, dev->keys().root, generate_p256().pub, &dev->log());
     expect_rejected(pkg, SB_ERR_AUTH);
 }
 
@@ -232,7 +233,7 @@ TEST_F(BootReject, HeaderIsBoundToCiphertextAsAad)
     // not the plaintext) re-labels an existing ciphertext with a new version.
     Bytes pkg = dev->package(kV2, 2, img2);
     put_le32(pkg, SB_MF_OFF_FW_VERSION, kV3);
-    resign(pkg, dev->keys().root);
+    dev->resign(pkg);
     expect_rejected(pkg, SB_ERR_AUTH);
 }
 
@@ -240,7 +241,7 @@ TEST_F(BootReject, WrongPlaintextDigest)
 {
     Bytes pkg = dev->package(kV2, 2, img2);
     pkg[SB_MF_OFF_PT_DIGEST] ^= 0x01;
-    resign(pkg, dev->keys().root);
+    dev->resign(pkg);
     expect_rejected(pkg, SB_ERR_DIGEST);
 }
 
@@ -248,7 +249,7 @@ TEST_F(BootReject, EphemeralKeyNotOnCurve)
 {
     Bytes pkg = dev->package(kV2, 2, img2);
     pkg[SB_MF_OFF_EPH_PUB + 64] ^= 0x01;
-    resign(pkg, dev->keys().root);
+    dev->resign(pkg);
     ASSERT_EQ(dev->stage(pkg), SB_OK);
     sb_boot_result_t res = boot_expect(img1);
     EXPECT_TRUE(res.events & SB_EVT_UPDATE_REJECTED);
@@ -417,7 +418,7 @@ TEST_F(Boot, FinishesCounterAdvanceInterruptedAfterConfirm)
 TEST_F(Boot, UpdateWriteEnforcesBounds)
 {
     Bytes buf(64, 0xAB);
-    uint32_t max_pkg = SB_MANIFEST_LEN + dev->max_image();
+    uint32_t max_pkg = SB_HEADER_LEN + dev->max_image();
     ASSERT_EQ(sb_update_begin(dev->ctx.get()), SB_OK);
     EXPECT_EQ(sb_update_write(dev->ctx.get(), max_pkg - 63, buf.data(), 64), SB_ERR_RANGE);
     EXPECT_EQ(sb_update_write(dev->ctx.get(), 0xFFFFFFF0u, buf.data(), 64), SB_ERR_RANGE);
@@ -448,31 +449,40 @@ TEST_F(Boot, ContextInitValidatesLayout)
     auto ctx = std::make_unique<sb_ctx_t>();
     const uint8_t *pub = dev->keys().root.pub.data();
 
+    const uint8_t *log_pub = dev->keys().log.pub.data();
     sb_layout_t ok = dev->layout;
-    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &ok, pub), SB_OK);
+    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &ok, pub, log_pub), SB_OK);
 
     sb_layout_t bad = ok;
     bad.slot_off[1] = bad.slot_off[0] + Device::kSector; // overlapping slots
-    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &bad, pub), SB_ERR_PARAM);
+    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &bad, pub, log_pub), SB_ERR_PARAM);
 
     bad = ok;
     bad.slot_off[1] += Device::kSector; // runs past the end of flash
-    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &bad, pub), SB_ERR_PARAM);
+    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &bad, pub, log_pub), SB_ERR_PARAM);
 
     bad = ok;
     bad.state_off[1] = bad.state_off[0]; // both state copies in one sector
-    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &bad, pub), SB_ERR_PARAM);
+    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &bad, pub, log_pub), SB_ERR_PARAM);
 
     bad = ok;
     bad.slot_off[0] += 16; // not sector aligned
-    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &bad, pub), SB_ERR_PARAM);
+    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &bad, pub, log_pub), SB_ERR_PARAM);
 
     bad = ok;
     bad.slot_size = Device::kSector; // no room for an image
-    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &bad, pub), SB_ERR_PARAM);
+    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &bad, pub, log_pub), SB_ERR_PARAM);
 
-    EXPECT_EQ(sb_ctx_init(nullptr, &flash, &otp, &ok, pub), SB_ERR_PARAM);
-    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &ok, nullptr), SB_ERR_PARAM);
+    EXPECT_EQ(sb_ctx_init(nullptr, &flash, &otp, &ok, pub, log_pub), SB_ERR_PARAM);
+    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &ok, nullptr, log_pub), SB_ERR_PARAM);
+    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &otp, &ok, pub, nullptr), SB_ERR_PARAM);
+
+    // One key must not hold both roles: equal anchors are refused.
+    sb_otp_sim_t same = dev->osim;
+    std::memcpy(same.log_key_hash, same.root_key_hash, 32);
+    sb_otp_t same_otp{};
+    sb_otp_sim_bind(&same, &same_otp);
+    EXPECT_EQ(sb_ctx_init(ctx.get(), &flash, &same_otp, &ok, pub, log_pub), SB_ERR_KEY);
 }
 
 }  // namespace

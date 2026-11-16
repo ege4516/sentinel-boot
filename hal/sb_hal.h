@@ -27,6 +27,8 @@ typedef struct {
     void *dev;
     /** SHA-256 of the root public key (trust anchor). */
     int (*read_root_key_hash)(void *dev, uint8_t out[32]);
+    /** SHA-256 of the transparency-log public key (second trust anchor). */
+    int (*read_log_key_hash)(void *dev, uint8_t out[32]);
     /** Device ECDH P-256 private key used to unwrap image keys. */
     int (*read_device_key)(void *dev, uint8_t out[32]);
     /** Monotonic anti-rollback counter. */

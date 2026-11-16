@@ -8,6 +8,12 @@ target_link_libraries(fuzz_manifest PRIVATE sb_boot)
 target_compile_options(fuzz_manifest PRIVATE ${SB_WARNINGS})
 target_link_options(fuzz_manifest PRIVATE -fsanitize=fuzzer)
 
+# Transparency-log proof block parser and verifier.
+add_executable(fuzz_proof fuzz_proof.c)
+target_link_libraries(fuzz_proof PRIVATE sb_boot)
+target_compile_options(fuzz_proof PRIVATE ${SB_WARNINGS})
+target_link_options(fuzz_proof PRIVATE -fsanitize=fuzzer)
+
 # Whole update path against a simulated device, with a security invariant.
 add_executable(fuzz_update fuzz_update.cpp ${PROJECT_SOURCE_DIR}/tests/support/signer.cpp)
 target_include_directories(fuzz_update PRIVATE ${PROJECT_SOURCE_DIR}/tests)

@@ -21,7 +21,8 @@ namespace sbtest {
 struct Keys {
     KeyPair root;
     KeyPair device;
-    static Keys generate() { return Keys{generate_p256(), generate_p256()}; }
+    KeyPair log;
+    static Keys generate() { return Keys{generate_p256(), generate_p256(), generate_p256()}; }
 };
 
 class Device {
@@ -30,13 +31,15 @@ public:
     static constexpr uint32_t kSlotSize = 8 * kSector;
     static constexpr uint32_t kFlashSize = 2 * kSector + 2 * kSlotSize;
 
-    explicit Device(const Keys &keys) : keys_(keys), mem_(kFlashSize)
+    explicit Device(const Keys &keys) : keys_(keys), log_(keys.log), mem_(kFlashSize)
     {
         sb_flash_sim_init(&fsim, mem_.data(), kFlashSize, kSector);
         sb_flash_sim_bind(&fsim, &flash_);
 
         auto anchor = sha256(keys_.root.pub.data(), keys_.root.pub.size());
-        if (sb_otp_sim_provision(&osim, anchor.data(), keys_.device.priv.data()) != 0) {
+        auto log_anchor = sha256(keys_.log.pub.data(), keys_.log.pub.size());
+        if (sb_otp_sim_provision(&osim, anchor.data(), log_anchor.data(),
+                                 keys_.device.priv.data()) != 0) {
             throw std::runtime_error("provision failed");
         }
         sb_otp_sim_bind(&osim, &otp_);
@@ -48,7 +51,8 @@ public:
         layout.slot_size = kSlotSize;
 
         ctx = std::make_unique<sb_ctx_t>();
-        if (sb_ctx_init(ctx.get(), &flash_, &otp_, &layout, keys_.root.pub.data()) != SB_OK) {
+        if (sb_ctx_init(ctx.get(), &flash_, &otp_, &layout, keys_.root.pub.data(),
+                        keys_.log.pub.data()) != SB_OK) {
             throw std::runtime_error("sb_ctx_init failed");
         }
     }
@@ -129,8 +133,17 @@ public:
         spec.fw_version = version;
         spec.security_counter = counter;
         spec.image = image;
-        return make_package(spec, keys_.root, keys_.device.pub);
+        return make_package(spec, keys_.root, keys_.device.pub, &log_);
     }
+
+    // Re-sign a modified package with the real root key and record it in the log.
+    void resign(Bytes &pkg)
+    {
+        sbtest::resign(pkg, keys_.root);
+        relog(pkg, log_);
+    }
+
+    TestLog &log() { return log_; }
 
     sb_flash_sim_t fsim{};
     sb_otp_sim_t osim{};
@@ -139,6 +152,7 @@ public:
 
 private:
     Keys keys_;
+    mutable TestLog log_; // package() appends: logically a log write, not a device change
     std::vector<uint8_t> mem_;
     sb_flash_t flash_{};
     sb_otp_t otp_{};

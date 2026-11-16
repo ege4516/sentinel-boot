@@ -10,6 +10,7 @@
 extern "C" {
 #include "boot/crypto_port.h"
 #include "boot/manifest.h"
+#include "boot/merkle.h"
 }
 
 namespace sbtest {
@@ -30,6 +31,7 @@ void ensure_init()
 }
 
 const uint8_t kKdfLabel[] = "sentinel-boot/v1/image-key";
+const char kTreeHeadLabel[] = "sentinel-boot/v1/tree-head";
 
 }  // namespace
 
@@ -121,6 +123,136 @@ void put_le32(Bytes &buf, size_t off, uint32_t v)
     buf[off + 2] = static_cast<uint8_t>(v >> 16);
 }
 
+Bytes sign_p256(const KeyPair &key, const Bytes &msg)
+{
+    ensure_init();
+    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+    psa_set_key_bits(&attr, 256);
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_SIGN_HASH);
+    psa_set_key_algorithm(&attr, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
+
+    mbedtls_svc_key_id_t id = MBEDTLS_SVC_KEY_ID_INIT;
+    check(psa_import_key(&attr, key.priv.data(), key.priv.size(), &id), "import signing key");
+    auto digest = sha256(msg.data(), msg.size());
+    Bytes sig(SB_P256_SIG_LEN);
+    size_t sig_len = 0;
+    psa_status_t st = psa_sign_hash(id, PSA_ALG_ECDSA(PSA_ALG_SHA_256), digest.data(),
+                                    digest.size(), sig.data(), sig.size(), &sig_len);
+    psa_destroy_key(id);
+    check(st, "psa_sign_hash");
+    if (sig_len != SB_P256_SIG_LEN) {
+        throw std::runtime_error("unexpected signature length");
+    }
+    return sig;
+}
+
+namespace {
+
+Bytes concat(std::initializer_list<const Bytes *> parts)
+{
+    Bytes out;
+    for (const Bytes *p : parts) {
+        out.insert(out.end(), p->begin(), p->end());
+    }
+    return out;
+}
+
+Bytes hash_bytes(const Bytes &in)
+{
+    auto h = sha256(in.data(), in.size());
+    return Bytes(h.begin(), h.end());
+}
+
+// RFC 9162 2.1.1: MTH over entries[lo, hi).
+Bytes mth(const std::vector<Bytes> &e, size_t lo, size_t hi)
+{
+    size_t n = hi - lo;
+    if (n == 0) {
+        return hash_bytes({});
+    }
+    if (n == 1) {
+        Bytes leaf{0x00};
+        leaf.insert(leaf.end(), e[lo].begin(), e[lo].end());
+        return hash_bytes(leaf);
+    }
+    size_t k = 1;
+    while (k * 2 < n) {
+        k *= 2;
+    }
+    Bytes prefix{0x01}, left = mth(e, lo, lo + k), right = mth(e, lo + k, hi);
+    return hash_bytes(concat({&prefix, &left, &right}));
+}
+
+// RFC 9162 2.1.3.1: PATH(m, entries[lo, hi)).
+void path(const std::vector<Bytes> &e, size_t m, size_t lo, size_t hi, std::vector<Bytes> &out)
+{
+    size_t n = hi - lo;
+    if (n == 1) {
+        return;
+    }
+    size_t k = 1;
+    while (k * 2 < n) {
+        k *= 2;
+    }
+    if (m < k) {
+        path(e, m, lo, lo + k, out);
+        out.push_back(mth(e, lo + k, hi));
+    } else {
+        path(e, m - k, lo + k, hi, out);
+        out.push_back(mth(e, lo, lo + k));
+    }
+}
+
+}  // namespace
+
+Bytes TestLog::root() const
+{
+    return mth(entries_, 0, entries_.size());
+}
+
+Bytes TestLog::proof_for(size_t index) const
+{
+    std::vector<Bytes> p;
+    path(entries_, index, 0, entries_.size(), p);
+    if (p.size() > SB_PROOF_MAX_DEPTH) {
+        throw std::runtime_error("test log outgrew the proof depth limit");
+    }
+    Bytes root_hash = root();
+
+    Bytes head(kTreeHeadLabel, kTreeHeadLabel + sizeof(kTreeHeadLabel) - 1);
+    uint32_t size = static_cast<uint32_t>(entries_.size());
+    for (int i = 0; i < 4; i++) {
+        head.push_back(static_cast<uint8_t>(size >> (8 * i)));
+    }
+    head.insert(head.end(), root_hash.begin(), root_hash.end());
+    Bytes sig = sign_p256(key_, head);
+
+    Bytes block(SB_PROOF_LEN, 0);
+    put_le32(block, SB_PF_OFF_INDEX, static_cast<uint32_t>(index));
+    put_le32(block, SB_PF_OFF_TREE_SIZE, size);
+    block[SB_PF_OFF_PATH_LEN] = static_cast<uint8_t>(p.size());
+    std::memcpy(&block[SB_PF_OFF_ROOT], root_hash.data(), root_hash.size());
+    std::memcpy(&block[SB_PF_OFF_SIGNATURE], sig.data(), sig.size());
+    for (size_t i = 0; i < p.size(); i++) {
+        std::memcpy(&block[SB_PF_OFF_PATH + 32 * i], p[i].data(), 32);
+    }
+    return block;
+}
+
+Bytes TestLog::append(const Bytes &leaf_data)
+{
+    entries_.push_back(leaf_data);
+    return proof_for(entries_.size() - 1);
+}
+
+void relog(Bytes &pkg, TestLog &log)
+{
+    Bytes leaf(pkg.begin(), pkg.begin() + SB_MANIFEST_SIGNED_LEN);
+    Bytes block = log.append(leaf);
+    std::memcpy(&pkg[SB_MANIFEST_LEN], block.data(), block.size());
+}
+
 void resign(Bytes &pkg, const KeyPair &root)
 {
     ensure_init();
@@ -146,11 +278,11 @@ void resign(Bytes &pkg, const KeyPair &root)
 }
 
 Bytes make_package(const PackageSpec &spec, const KeyPair &root,
-                   const std::array<uint8_t, 65> &device_pub)
+                   const std::array<uint8_t, 65> &device_pub, TestLog *log)
 {
     ensure_init();
     const Bytes &img = spec.image;
-    Bytes pkg(SB_MANIFEST_LEN + img.size(), 0);
+    Bytes pkg(SB_HEADER_LEN + img.size(), 0);
 
     // Header fields.
     put_le32(pkg, SB_MF_OFF_MAGIC, SB_MANIFEST_MAGIC);
@@ -201,7 +333,7 @@ Bytes make_package(const PackageSpec &spec, const KeyPair &root,
         throw std::runtime_error("unexpected ciphertext length");
     }
 
-    std::memcpy(&pkg[SB_MANIFEST_LEN], ct_tag.data(), img.size());
+    std::memcpy(&pkg[SB_HEADER_LEN], ct_tag.data(), img.size());
     std::memcpy(&pkg[SB_MF_OFF_TAG], ct_tag.data() + img.size(), SB_GCM_TAG_LEN);
 
     auto ct_digest = sha256(ct_tag.data(), img.size());
@@ -210,6 +342,9 @@ Bytes make_package(const PackageSpec &spec, const KeyPair &root,
     std::memcpy(&pkg[SB_MF_OFF_PT_DIGEST], pt_digest.data(), pt_digest.size());
 
     resign(pkg, root);
+    if (log != nullptr) {
+        relog(pkg, *log);
+    }
     return pkg;
 }
 

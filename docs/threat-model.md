@@ -11,6 +11,8 @@ stated.
 | Firmware integrity | Only vendor-signed code may run |
 | Firmware confidentiality | Images are IP; they travel and rest encrypted |
 | Root key hash (OTP) | The trust anchor of the whole chain |
+| Log key hash (OTP) | Second anchor: ties every release to the public transparency log |
+| The log itself | An append-only record of every release ever signed, auditable by anyone |
 | Device ECDH private key | Unwraps image keys; its disclosure exposes that device's packages |
 | Anti-rollback counter | Stops re-installation of old, vulnerable releases |
 | Availability | An update must never leave the device unable to boot |
@@ -22,11 +24,18 @@ stated.
 - Can write arbitrary bytes to external flash between resets (including the root public key stored there).
 - Can cut power at any moment, including in the middle of a flash write or erase.
 - Holds genuine, vendor-signed old releases.
+- Has **stolen the firmware root key** but not the log key, and can run a fake log of their own.
 
 ## Mitigations and the test that proves each one
 
 | Threat | Mitigation | Test |
 |--------|------------|------|
+| Stolen root key: correctly signed release that was never logged | The package must carry a signed tree head and an inclusion proof for its manifest; the log key is a separate OTP anchor | `LogReject.ReleaseThatWasNeverLogged`, `ProofCopiedFromAnotherRelease`, `ProofForAModifiedManifest` |
+| Fake log run with the stolen root key | Tree heads are checked against the *log* key, never the root key | `LogReject.TreeHeadSignedByTheRootKey` |
+| Log public key swapped in flash | The key must hash to the OTP log anchor; the device fails closed | `LogReject.SubstitutedLogKeyInFlash` |
+| Tampered or malformed proof | Strict parsing (zero padding, bounds), RFC 9162 verification, every bit of the proof block and of the leaf checked | `LogReject.EveryBitOfTheProofBlockMatters`, `Merkle.*`, `fuzz_proof` |
+| Interior tree node passed off as a leaf | Distinct hash prefixes for leaves (0x00) and nodes (0x01) | `Merkle.InteriorNodeCannotPassAsLeaf` |
+| One key holding both roles | Equal anchors are refused when the device is provisioned and when the bootloader starts | `OtpSim.ProvisionIsOneTimeAndCounterIsMonotonic`, `Boot.ContextInitValidatesLayout` |
 | Forged firmware | ECDSA P-256 over the whole manifest; root key must hash to the OTP anchor | `Manifest.RejectsManifestSignedByAnotherKey`, `Manifest.RejectsSubstitutedRootKey`, `BootReject.SignedByAttackerKey` |
 | Modified manifest field | Signature covers every field except itself; exhaustive single-bit flips | `Manifest.AnyBitFlipInSignedRegionIsRejected`, `...InSignatureIsRejected` |
 | Modified ciphertext | `ct_digest` checked before decryption, GCM tag after | `BootReject.TamperedCiphertext`, `TruncatedPackage` |
@@ -56,6 +65,12 @@ requires the suite to fail; all 19 mutations are detected.
 - **Rollback consequence.** Once an image with counter N is confirmed, images with a
   lower counter are no longer acceptable fallbacks. This is the intended price of
   anti-rollback (`Boot.ConfirmedCounterBumpRetiresOlderFallback`).
+- **The log proof is mandatory.** A manifest signed by the root key is not enough; the proof
+  block is checked inside the same function that checks the root signature, so installation,
+  every boot, confirmation and state recovery all go through it. Format 1 packages, which
+  carry no proof, are rejected, otherwise a stolen root key could simply sign in the old format.
+- **The leaf is the signed manifest region.** The proof binds the log entry to every field the
+  root key signed (digests, counter, version, key id), not to a hash of the whole file.
 - **Equal counters are accepted.** The counter marks security-relevant releases; a
   release that does not raise it can still be installed and reverted.
 
@@ -84,6 +99,18 @@ requires the suite to fail; all 19 mutations are detected.
 - **The application can call confirm.** A compromised but validly signed application
   can confirm itself; the trial mechanism protects against faulty updates, not
   against a malicious vendor.
+- **The log protects against a stolen root key, not a stolen log key plus root key.** An
+  attacker holding both keys can sign and log a release; the log then contains an entry nobody
+  intended, which is detectable by auditing (`sentinel_sign.py log-audit`) but not preventable
+  on the device.
+- **No consistency or freshness checking.** The device stores no log state and does not compare
+  tree heads, so it cannot detect a split view (different histories shown to different parties)
+  or a stale tree head, and an operator could rewrite history before anyone looks. Defending
+  against that needs consistency proofs and independent witnesses (RFC 9162 section 2.1.4).
+- **Single log operator.** One key, one party. It is a Merkle transparency log in the style of
+  Certificate Transparency, **not a blockchain**: there is no consensus and no distributed trust.
+- **Proof depth limit.** A proof carries at most 8 hashes, so the log can be at most 256 entries
+  before the format must change.
 - **The boot-state record is CRC-checked, not authenticated.** The in-scope adversary
   who can write flash can forge it: switch the active slot, or mark an unconfirmed but
   validly signed image CONFIRMED (which also lets `sb_boot` raise the OTP counter to

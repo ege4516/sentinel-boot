@@ -94,17 +94,21 @@ TEST(OtpSim, ProvisionIsOneTimeAndCounterIsMonotonic)
 {
     sb_otp_sim_t sim{};
     sb_otp_t otp{};
-    uint8_t hash[32], key[32], out[32];
+    uint8_t hash[32], log_hash[32], key[32], out[32];
     uint32_t counter = 99;
     for (int i = 0; i < 32; i++) {
         hash[i] = static_cast<uint8_t>(i);
+        log_hash[i] = static_cast<uint8_t>(0x50 + i);
         key[i] = static_cast<uint8_t>(0xA0 + i);
     }
     sb_otp_sim_bind(&sim, &otp);
 
     EXPECT_NE(otp.read_counter(otp.dev, &counter), 0); // unprovisioned
-    ASSERT_EQ(sb_otp_sim_provision(&sim, hash, key), 0);
-    EXPECT_NE(sb_otp_sim_provision(&sim, key, hash), 0); // cannot re-provision
+    EXPECT_NE(sb_otp_sim_provision(&sim, hash, hash, key), 0); // root and log anchors must differ
+    ASSERT_EQ(sb_otp_sim_provision(&sim, hash, log_hash, key), 0);
+    EXPECT_NE(sb_otp_sim_provision(&sim, key, hash, hash), 0); // cannot re-provision
+    ASSERT_EQ(otp.read_log_key_hash(otp.dev, out), 0);
+    EXPECT_EQ(out[5], 0x55);
 
     ASSERT_EQ(otp.read_root_key_hash(otp.dev, out), 0);
     EXPECT_EQ(out[5], 5);

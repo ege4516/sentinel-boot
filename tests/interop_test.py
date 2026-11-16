@@ -46,6 +46,7 @@ def main():
 
     def sign(image, version, counter, out, device_pub=None):
         signer("sign", "--root-key", keys / "root_private.pem",
+               "--log-key", keys / "log_private.pem", "--log-dir", work / "log",
                "--device-pub", device_pub or keys / "device_public.bin",
                "--image", image, "--version", version, "--security-counter", counter,
                "--out", out)
@@ -62,7 +63,8 @@ def main():
     sign(work / "fw2.bin", "2.1.7", 2, work / "v2.pkg")
 
     print("provision + first install")
-    rc, _ = sim("provision", keys / "root_public.bin", keys / "device_private.bin")
+    rc, _ = sim("provision", keys / "root_public.bin", keys / "log_public.bin",
+                keys / "device_private.bin")
     check(rc == 0, "provision")
     rc, _ = sim("boot")
     check(rc == 2, "blank device reports no image")
@@ -93,6 +95,27 @@ def main():
     rc, out = sim("boot")
     check(rc == 0 and "REJECTED: rollback rejected" in out, "old release rejected")
     check(running_image() == fw2, "device still runs v2")
+
+    print("release signed with the root key but never logged")
+    sign_unlogged = [sys.executable, args.signer, "sign",
+                     "--root-key", keys / "root_private.pem",
+                     "--reuse-proof-from", work / "v2.pkg",
+                     "--device-pub", keys / "device_public.bin",
+                     "--image", work / "fw1.bin", "--version", "7.0.0",
+                     "--security-counter", 7, "--out", work / "unlogged.pkg"]
+    subprocess.run([str(a) for a in sign_unlogged], check=True, stdout=subprocess.DEVNULL)
+    check(sim("stage", work / "unlogged.pkg")[0] == 0, "stage unlogged release")
+    rc, out = sim("boot")
+    check(rc == 0 and "REJECTED: transparency log proof rejected" in out,
+          "root-signed but unlogged release rejected")
+    check(running_image() == fw2, "device still runs v2")
+
+    print("log audit")
+    p = subprocess.run([sys.executable, args.signer, "log-audit", "--log-dir", str(work / "log"),
+                        "--log-pub", str(keys / "log_public.bin")], stdout=subprocess.PIPE,
+                       universal_newlines=True)
+    check(p.returncode == 0 and "head signature valid: True" in p.stdout,
+          "auditor sees a consistent, signed log")
 
     print("package for another device")
     signer("keygen", work / "other")

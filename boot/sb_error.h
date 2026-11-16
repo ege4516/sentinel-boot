@@ -17,7 +17,10 @@ typedef enum {
     SB_ERR_OTP = -10,         /**< OTP driver error */
     SB_ERR_STATE = -11,       /**< Operation not valid in the current slot state */
     SB_ERR_NO_IMAGE = -12,    /**< No bootable image in any slot */
-    SB_ERR_RANGE = -13        /**< Offset/length outside the slot */
+    SB_ERR_RANGE = -13,       /**< Offset/length outside the slot */
+    SB_ERR_LOG = -14,         /**< Transparency-log proof missing, malformed or not matching */
+    SB_ERR_LOG_KEY = -15,     /**< Log key does not match the OTP log anchor */
+    SB_ERR_LOG_SIGNATURE = -16 /**< Signed tree head rejected */
 } sb_err_t;
 
 /** Human readable name for a status code. Never returns NULL. */

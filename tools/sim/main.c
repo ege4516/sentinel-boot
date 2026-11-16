@@ -3,7 +3,7 @@
  * @file main.c
  * sentinel-sim: drive the bootloader core against a file-backed device.
  *
- *   sentinel-sim <dir> provision <root_public.bin> <device_private.bin>
+ *   sentinel-sim <dir> provision <root_public.bin> <log_public.bin> <device_private.bin>
  *   sentinel-sim <dir> stage <package.bin>
  *   sentinel-sim <dir> boot
  *   sentinel-sim <dir> confirm
@@ -11,7 +11,7 @@
  *   sentinel-sim <dir> dump <out.bin>     (image selected by a verified boot)
  *
  * <dir> holds the device's persistent state: flash.bin, otp.bin and the root
- * public key. Each invocation is one "power cycle".
+ * and log public keys. Each invocation is one "power cycle".
  *
  * Exit status: 0 ok, 2 no bootable image, 1 any other error.
  */
@@ -26,11 +26,12 @@
 #define SECTOR 4096u
 #define SLOT_SIZE (64u * SECTOR)
 #define FLASH_SIZE (2u * SECTOR + 2u * SLOT_SIZE)
-#define MAX_PACKAGE (SB_MANIFEST_LEN + SLOT_SIZE)
+#define MAX_PACKAGE (SB_HEADER_LEN + SLOT_SIZE)
 
 static uint8_t g_mem[FLASH_SIZE];
 static uint8_t g_pkg[MAX_PACKAGE];
 static uint8_t g_root_pub[SB_P256_PUB_LEN];
+static uint8_t g_log_pub[SB_P256_PUB_LEN];
 static sb_flash_sim_t g_fsim;
 static sb_otp_sim_t g_osim;
 static sb_flash_t g_flash;
@@ -40,6 +41,7 @@ static sb_ctx_t g_ctx;
 static char g_flash_path[512];
 static char g_otp_path[512];
 static char g_root_path[512];
+static char g_log_path[512];
 
 static long read_file(const char *path, uint8_t *buf, size_t cap)
 {
@@ -101,11 +103,12 @@ static int open_device(void)
 
     if (sb_flash_sim_load(&g_fsim, g_flash_path) != 0 ||
         sb_otp_sim_load(&g_osim, g_otp_path) != 0 ||
-        read_file(g_root_path, g_root_pub, sizeof(g_root_pub)) != (long)sizeof(g_root_pub)) {
+        read_file(g_root_path, g_root_pub, sizeof(g_root_pub)) != (long)sizeof(g_root_pub) ||
+        read_file(g_log_path, g_log_pub, sizeof(g_log_pub)) != (long)sizeof(g_log_pub)) {
         fprintf(stderr, "error: device not provisioned (run 'provision' first)\n");
         return 1;
     }
-    err = sb_ctx_init(&g_ctx, &g_flash, &g_otp, &layout, g_root_pub);
+    err = sb_ctx_init(&g_ctx, &g_flash, &g_otp, &layout, g_root_pub, g_log_pub);
     if (err != SB_OK) {
         fprintf(stderr, "error: context init: %s\n", sb_strerror(err));
         return 1;
@@ -113,29 +116,34 @@ static int open_device(void)
     return 0;
 }
 
-static int cmd_provision(const char *root_pub_path, const char *device_key_path)
+static int cmd_provision(const char *root_pub_path, const char *log_pub_path,
+                         const char *device_key_path)
 {
     uint8_t device_key[SB_P256_PRIV_LEN];
-    uint8_t anchor[SB_SHA256_LEN];
+    uint8_t root_anchor[SB_SHA256_LEN];
+    uint8_t log_anchor[SB_SHA256_LEN];
 
     if (read_file(root_pub_path, g_root_pub, sizeof(g_root_pub)) != (long)sizeof(g_root_pub) ||
+        read_file(log_pub_path, g_log_pub, sizeof(g_log_pub)) != (long)sizeof(g_log_pub) ||
         read_file(device_key_path, device_key, sizeof(device_key)) != (long)sizeof(device_key)) {
-        fprintf(stderr, "error: cannot read key files (need 65 and 32 bytes)\n");
+        fprintf(stderr, "error: cannot read key files (need 65, 65 and 32 bytes)\n");
         return 1;
     }
     if (sb_crypto_init() != SB_OK ||
-        sb_sha256(g_root_pub, sizeof(g_root_pub), anchor) != SB_OK) {
+        sb_sha256(g_root_pub, sizeof(g_root_pub), root_anchor) != SB_OK ||
+        sb_sha256(g_log_pub, sizeof(g_log_pub), log_anchor) != SB_OK) {
         fprintf(stderr, "error: crypto init failed\n");
         return 1;
     }
     memset(&g_osim, 0, sizeof(g_osim));
-    if (sb_otp_sim_provision(&g_osim, anchor, device_key) != 0 ||
-        write_file(g_root_path, g_root_pub, sizeof(g_root_pub)) != 0) {
-        fprintf(stderr, "error: provisioning failed\n");
+    if (sb_otp_sim_provision(&g_osim, root_anchor, log_anchor, device_key) != 0 ||
+        write_file(g_root_path, g_root_pub, sizeof(g_root_pub)) != 0 ||
+        write_file(g_log_path, g_log_pub, sizeof(g_log_pub)) != 0) {
+        fprintf(stderr, "error: provisioning failed (root and log keys must differ)\n");
         return 1;
     }
     sb_zeroize(device_key, sizeof(device_key));
-    printf("provisioned: blank flash (%u KiB), root key anchor burned, counter = 0\n",
+    printf("provisioned: blank flash (%u KiB), root and log key anchors burned, counter = 0\n",
            (unsigned)(FLASH_SIZE / 1024u));
     return save_device();
 }
@@ -265,7 +273,8 @@ static int cmd_dump(const char *out_path)
 static void usage(void)
 {
     fprintf(stderr,
-            "usage: sentinel-sim <dir> provision <root_public.bin> <device_private.bin>\n"
+            "usage: sentinel-sim <dir> provision <root_public.bin> <log_public.bin> "
+            "<device_private.bin>\n"
             "       sentinel-sim <dir> stage <package.bin>\n"
             "       sentinel-sim <dir> boot | confirm | status\n"
             "       sentinel-sim <dir> dump <out.bin>\n");
@@ -286,7 +295,9 @@ int main(int argc, char **argv)
             (int)sizeof(g_flash_path) ||
         snprintf(g_otp_path, sizeof(g_otp_path), "%s/otp.bin", dir) >= (int)sizeof(g_otp_path) ||
         snprintf(g_root_path, sizeof(g_root_path), "%s/root_public.bin", dir) >=
-            (int)sizeof(g_root_path)) {
+            (int)sizeof(g_root_path) ||
+        snprintf(g_log_path, sizeof(g_log_path), "%s/log_public.bin", dir) >=
+            (int)sizeof(g_log_path)) {
         fprintf(stderr, "error: directory path too long\n");
         return 1;
     }
@@ -295,8 +306,8 @@ int main(int argc, char **argv)
     sb_flash_sim_bind(&g_fsim, &g_flash);
     sb_otp_sim_bind(&g_osim, &g_otp);
 
-    if (strcmp(cmd, "provision") == 0 && argc == 5) {
-        return cmd_provision(argv[3], argv[4]);
+    if (strcmp(cmd, "provision") == 0 && argc == 6) {
+        return cmd_provision(argv[3], argv[4], argv[5]);
     }
     if (open_device() != 0) {
         return 1;

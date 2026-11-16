@@ -18,6 +18,7 @@
 #include <stdint.h>
 
 #include "boot/manifest.h"
+#include "boot/merkle.h"
 #include "boot/sb_error.h"
 #include "hal/sb_hal.h"
 
@@ -56,6 +57,7 @@ typedef struct {
     const sb_otp_t *otp;
     sb_layout_t layout;
     const uint8_t *root_pub;       /**< 65-byte root public key (untrusted storage) */
+    const uint8_t *log_pub;        /**< 65-byte transparency-log public key (untrusted storage) */
     uint8_t max_trials;
     uint8_t buf_in[SB_MAX_SECTOR_SIZE];
     uint8_t buf_out[SB_MAX_SECTOR_SIZE];
@@ -81,9 +83,12 @@ typedef struct {
 /**
  * Validate the layout and initialise a context.
  * @param root_pub Must stay valid for the lifetime of ctx.
+ * @param log_pub  Must stay valid for the lifetime of ctx. Its hash must differ
+ *                 from the root key's hash in OTP: one key must not hold both roles.
  */
 sb_err_t sb_ctx_init(sb_ctx_t *ctx, const sb_flash_t *flash, const sb_otp_t *otp,
-                     const sb_layout_t *layout, const uint8_t root_pub[SB_P256_PUB_LEN]);
+                     const sb_layout_t *layout, const uint8_t root_pub[SB_P256_PUB_LEN],
+                     const uint8_t log_pub[SB_P256_PUB_LEN]);
 
 /** Largest image a slot can hold. */
 uint32_t sb_max_image_size(const sb_ctx_t *ctx);

@@ -2,7 +2,8 @@
 /**
  * @file manifest.h
  * Signed update manifest: fixed-size, little-endian wire format.
- * See docs/image-format.md for the byte-level layout.
+ * See docs/image-format.md for the byte-level layout. A package is
+ * manifest || proof block (boot/merkle.h) || ciphertext.
  */
 #ifndef SB_MANIFEST_H
 #define SB_MANIFEST_H
@@ -14,7 +15,7 @@
 #include "boot/sb_error.h"
 
 #define SB_MANIFEST_MAGIC 0x314D4253u /* "SBM1" on the wire */
-#define SB_MANIFEST_FORMAT 1u
+#define SB_MANIFEST_FORMAT 2u /* 2: requires a transparency-log inclusion proof */
 
 /* Wire offsets */
 #define SB_MF_OFF_MAGIC 0u

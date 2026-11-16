@@ -11,7 +11,7 @@
 #include "hal/flash_sim.h"
 #include "hal/otp_sim.h"
 
-#define OTP_FILE_LEN (32u + 32u + 4u + 1u)
+#define OTP_FILE_LEN (32u + 32u + 32u + 4u + 1u)
 
 int sb_flash_sim_save(const sb_flash_sim_t *sim, const char *path)
 {
@@ -46,12 +46,13 @@ int sb_otp_sim_save(const sb_otp_sim_t *sim, const char *path)
     size_t n;
 
     memcpy(buf, sim->root_key_hash, 32);
-    memcpy(buf + 32, sim->device_key, 32);
-    buf[64] = (uint8_t)(sim->counter & 0xFFu);
-    buf[65] = (uint8_t)((sim->counter >> 8) & 0xFFu);
-    buf[66] = (uint8_t)((sim->counter >> 16) & 0xFFu);
-    buf[67] = (uint8_t)((sim->counter >> 24) & 0xFFu);
-    buf[68] = sim->provisioned;
+    memcpy(buf + 32, sim->log_key_hash, 32);
+    memcpy(buf + 64, sim->device_key, 32);
+    buf[96] = (uint8_t)(sim->counter & 0xFFu);
+    buf[97] = (uint8_t)((sim->counter >> 8) & 0xFFu);
+    buf[98] = (uint8_t)((sim->counter >> 16) & 0xFFu);
+    buf[99] = (uint8_t)((sim->counter >> 24) & 0xFFu);
+    buf[100] = sim->provisioned;
 
     f = fopen(path, "wb");
     if (f == NULL) {
@@ -79,9 +80,10 @@ int sb_otp_sim_load(sb_otp_sim_t *sim, const char *path)
         return -1;
     }
     memcpy(sim->root_key_hash, buf, 32);
-    memcpy(sim->device_key, buf + 32, 32);
-    sim->counter = (uint32_t)buf[64] | ((uint32_t)buf[65] << 8) | ((uint32_t)buf[66] << 16) |
-                   ((uint32_t)buf[67] << 24);
-    sim->provisioned = buf[68] != 0;
+    memcpy(sim->log_key_hash, buf + 32, 32);
+    memcpy(sim->device_key, buf + 64, 32);
+    sim->counter = (uint32_t)buf[96] | ((uint32_t)buf[97] << 8) | ((uint32_t)buf[98] << 16) |
+                   ((uint32_t)buf[99] << 24);
+    sim->provisioned = buf[100] != 0;
     return 0;
 }

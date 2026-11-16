@@ -39,6 +39,9 @@ const char *sb_strerror(sb_err_t err)
     case SB_ERR_STATE: return "invalid state";
     case SB_ERR_NO_IMAGE: return "no bootable image";
     case SB_ERR_RANGE: return "out of range";
+    case SB_ERR_LOG: return "transparency log proof rejected";
+    case SB_ERR_LOG_KEY: return "untrusted log key";
+    case SB_ERR_LOG_SIGNATURE: return "tree head signature rejected";
     default: return "unknown error";
     }
 }

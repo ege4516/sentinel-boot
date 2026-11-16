@@ -83,14 +83,17 @@ static void setup_device(void)
         .slot_size = SLOT_SIZE,
     };
     uint8_t anchor[SB_SHA256_LEN];
+    uint8_t log_anchor[SB_SHA256_LEN];
 
     sb_flash_sim_init(&g_fsim, g_flash_mem, FLASH_SIZE, SECTOR);
     sb_flash_sim_bind(&g_fsim, &g_flash);
     memset(&g_osim, 0, sizeof(g_osim));
     sb_otp_sim_bind(&g_osim, &g_otp);
-    CHECK(sb_ctx_init(&g_ctx, &g_flash, &g_otp, &layout, FX_ROOT_PUB) == SB_OK, "ctx init");
     CHECK(sb_sha256(FX_ROOT_PUB, sizeof(FX_ROOT_PUB), anchor) == SB_OK, "hash root key");
-    CHECK(sb_otp_sim_provision(&g_osim, anchor, FX_DEVICE_PRIV) == 0, "provision otp");
+    CHECK(sb_sha256(FX_LOG_PUB, sizeof(FX_LOG_PUB), log_anchor) == SB_OK, "hash log key");
+    CHECK(sb_otp_sim_provision(&g_osim, anchor, log_anchor, FX_DEVICE_PRIV) == 0, "provision otp");
+    CHECK(sb_ctx_init(&g_ctx, &g_flash, &g_otp, &layout, FX_ROOT_PUB, FX_LOG_PUB) == SB_OK,
+          "ctx init");
 }
 
 static void expect_rejected(const char *what, const uint8_t *pkg, size_t len, sb_err_t reason,
@@ -191,13 +194,15 @@ int main(void)
 
     printf("[3] attacks\n");
     memcpy(g_tampered, FX_PKG_V2, sizeof(g_tampered));
-    g_tampered[SB_MANIFEST_LEN + 100] ^= 0x01;
+    g_tampered[SB_HEADER_LEN + 100] ^= 0x01;
     expect_rejected("flipped ciphertext bit", g_tampered, sizeof(g_tampered), SB_ERR_DIGEST, 5000u,
                     0x22);
     expect_rejected("replayed signed v1 (rollback)", FX_PKG_V1, sizeof(FX_PKG_V1),
                     SB_ERR_ROLLBACK, 5000u, 0x22);
     expect_rejected("signed by attacker key", FX_PKG_EVIL, sizeof(FX_PKG_EVIL), SB_ERR_KEY, 5000u,
                     0x22);
+    expect_rejected("root-signed but never logged", FX_PKG_UNLOGGED, sizeof(FX_PKG_UNLOGGED),
+                    SB_ERR_LOG, 5000u, 0x22);
 
     printf("[4] power loss\n");
     power_loss_sweep();

@@ -103,7 +103,11 @@ TEST_F(Manifest, RejectsBadHeaderFields)
     EXPECT_EQ(parse(m), SB_ERR_FORMAT);
 
     m = pkg_;
-    m[SB_MF_OFF_FORMAT] = 2;
+    m[SB_MF_OFF_FORMAT] = 1; // the previous format had no log proof and is refused
+    EXPECT_EQ(parse(m), SB_ERR_FORMAT);
+
+    m = pkg_;
+    m[SB_MF_OFF_FORMAT] = 3;
     EXPECT_EQ(parse(m), SB_ERR_FORMAT);
 
     m = pkg_;

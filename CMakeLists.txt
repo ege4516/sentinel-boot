@@ -43,6 +43,7 @@ set(SB_WARNINGS -Wall -Wextra -Werror -Wconversion -Wshadow -Wstrict-prototypes
 add_library(sb_boot STATIC
   boot/crypto_port.c
   boot/manifest.c
+  boot/merkle.c
   boot/state.c
   boot/verify.c
   boot/update.c

@@ -10,6 +10,8 @@ add_executable(sb_tests
   support/signer.cpp
   unit/test_crypto.cpp
   unit/test_manifest.cpp
+  unit/test_merkle.cpp
+  unit/test_log.cpp
   unit/test_hal.cpp
   unit/test_boot.cpp
   unit/test_powerfail.cpp)

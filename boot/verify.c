@@ -12,6 +12,9 @@ int sb_is_reject(sb_err_t err)
     case SB_ERR_ROLLBACK:
     case SB_ERR_DIGEST:
     case SB_ERR_AUTH:
+    case SB_ERR_LOG:
+    case SB_ERR_LOG_KEY:
+    case SB_ERR_LOG_SIGNATURE:
     case SB_ERR_CRYPTO: /* fail closed: a backend error never accepts an image */
         return 1;
     default:
@@ -25,7 +28,7 @@ static int layout_ok(const sb_flash_t *flash, const sb_layout_t *l)
     uint32_t start[4];
     uint32_t len[4];
 
-    if (ss == 0 || ss > SB_MAX_SECTOR_SIZE || (ss % 16u) != 0 || ss < SB_MANIFEST_LEN) {
+    if (ss == 0 || ss > SB_MAX_SECTOR_SIZE || (ss % 16u) != 0 || ss < SB_HEADER_LEN) {
         return 0;
     }
     if (l->slot_size < 2u * ss || (l->slot_size % ss) != 0) {
@@ -55,15 +58,30 @@ static int layout_ok(const sb_flash_t *flash, const sb_layout_t *l)
 }
 
 sb_err_t sb_ctx_init(sb_ctx_t *ctx, const sb_flash_t *flash, const sb_otp_t *otp,
-                     const sb_layout_t *layout, const uint8_t root_pub[SB_P256_PUB_LEN])
+                     const sb_layout_t *layout, const uint8_t root_pub[SB_P256_PUB_LEN],
+                     const uint8_t log_pub[SB_P256_PUB_LEN])
 {
-    if (ctx == NULL || flash == NULL || otp == NULL || layout == NULL || root_pub == NULL) {
+    uint8_t root_anchor[SB_SHA256_LEN];
+    uint8_t log_anchor[SB_SHA256_LEN];
+
+    if (ctx == NULL || flash == NULL || otp == NULL || layout == NULL || root_pub == NULL ||
+        log_pub == NULL) {
         return SB_ERR_PARAM;
     }
     if (flash->read == NULL || flash->write == NULL || flash->erase == NULL ||
-        otp->read_root_key_hash == NULL || otp->read_device_key == NULL ||
-        otp->read_counter == NULL || otp->advance_counter == NULL) {
+        otp->read_root_key_hash == NULL || otp->read_log_key_hash == NULL ||
+        otp->read_device_key == NULL || otp->read_counter == NULL ||
+        otp->advance_counter == NULL) {
         return SB_ERR_PARAM;
+    }
+    /* The firmware root key and the log key must be different keys, or a
+     * stolen root key would also forge log entries. */
+    if (otp->read_root_key_hash(otp->dev, root_anchor) != 0 ||
+        otp->read_log_key_hash(otp->dev, log_anchor) != 0) {
+        return SB_ERR_OTP;
+    }
+    if (sb_ct_memeq(root_anchor, log_anchor, SB_SHA256_LEN)) {
+        return SB_ERR_KEY;
     }
     if (!layout_ok(flash, layout)) {
         return SB_ERR_PARAM;
@@ -73,6 +91,7 @@ sb_err_t sb_ctx_init(sb_ctx_t *ctx, const sb_flash_t *flash, const sb_otp_t *otp
     ctx->otp = otp;
     ctx->layout = *layout;
     ctx->root_pub = root_pub;
+    ctx->log_pub = log_pub;
     ctx->max_trials = SB_DEFAULT_TRIALS;
     return sb_crypto_init();
 }
@@ -91,6 +110,8 @@ sb_err_t sb_slot_authenticate(sb_ctx_t *ctx, uint8_t slot, uint8_t raw[SB_MANIFE
                               sb_manifest_t *mf)
 {
     uint8_t anchor[SB_SHA256_LEN];
+    uint8_t pf_raw[SB_PROOF_LEN];
+    sb_proof_t proof;
     uint32_t counter = 0;
     sb_err_t err;
 
@@ -105,6 +126,24 @@ sb_err_t sb_slot_authenticate(sb_ctx_t *ctx, uint8_t slot, uint8_t raw[SB_MANIFE
         return SB_ERR_OTP;
     }
     err = sb_manifest_verify(raw, mf, ctx->root_pub, anchor);
+    if (err != SB_OK) {
+        return err;
+    }
+
+    /* A root signature alone is not enough: the release must also be in the
+     * append-only transparency log, whose key is a separate OTP anchor. */
+    if (ctx->flash->read(ctx->flash->dev, ctx->layout.slot_off[slot] + SB_MANIFEST_LEN, pf_raw,
+                         SB_PROOF_LEN) != 0) {
+        return SB_ERR_FLASH;
+    }
+    err = sb_proof_parse(pf_raw, SB_PROOF_LEN, &proof);
+    if (err != SB_OK) {
+        return err;
+    }
+    if (ctx->otp->read_log_key_hash(ctx->otp->dev, anchor) != 0) {
+        return SB_ERR_OTP;
+    }
+    err = sb_proof_verify(raw, &proof, ctx->log_pub, anchor);
     if (err != SB_OK) {
         return err;
     }

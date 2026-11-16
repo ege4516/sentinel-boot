@@ -27,6 +27,17 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }} -j 4
 
+  vectors:
+    name: generated vectors are up to date
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install cryptography
+      - name: Regenerate the Merkle vectors and compare
+        run: |
+          python3 tools/gen_merkle_vectors.py /tmp/merkle_rfc9162.inc
+          diff -q /tmp/merkle_rfc9162.inc tests/vectors/merkle_rfc9162.inc
+
   valgrind:
     runs-on: ubuntu-22.04
     steps:
@@ -41,7 +52,7 @@ jobs:
       - name: Run the end-to-end scenarios under Valgrind
         run: |
           valgrind --error-exitcode=1 --leak-check=full \
-            ~/sb-build/host-debug/tests/sb_tests --gtest_filter='Boot.*:BootReject.*:Boundaries/*'
+            ~/sb-build/host-debug/tests/sb_tests --gtest_filter='Boot.*:BootReject.*:Boundaries/*:LogReject.SubstitutedLogKeyInFlash:LogReject.ReleaseThatWasNeverLogged:LogAccept.*'
 
   static-analysis:
     runs-on: ubuntu-22.04
@@ -73,6 +84,10 @@ jobs:
           mkdir -p /tmp/corpus-manifest
           ~/sb-build/host-fuzz/tests/fuzz/fuzz_manifest -max_total_time=60 -max_len=400 \
             /tmp/corpus-manifest tests/fuzz/corpus/manifest
+      - name: Fuzz the transparency-log proof parser and verifier
+        run: |
+          mkdir -p /tmp/corpus-proof
+          ~/sb-build/host-fuzz/tests/fuzz/fuzz_proof -max_total_time=60 -max_len=700             /tmp/corpus-proof tests/fuzz/corpus/proof
       - name: Fuzz the full update path
         run: |
           mkdir -p /tmp/corpus-update

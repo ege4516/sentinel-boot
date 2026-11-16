@@ -26,12 +26,14 @@ namespace {
 
 Keys fixed_keys()
 {
-    std::array<uint8_t, 32> root{}, device{};
+    std::array<uint8_t, 32> root{}, device{}, log{};
     for (size_t i = 0; i < 32; i++) {
         root[i] = static_cast<uint8_t>(0x11 + i);
         device[i] = static_cast<uint8_t>(0xA1 + i);
+        log[i] = static_cast<uint8_t>(0x51 + i);
     }
-    return Keys{keypair_from_private(root), keypair_from_private(device)};
+    return Keys{keypair_from_private(root), keypair_from_private(device),
+                keypair_from_private(log)};
 }
 
 struct Harness {
@@ -82,6 +84,10 @@ extern "C" int LLVMFuzzerInitialize(int *, char ***)
         Bytes m = {0x00, 0x70, 0x00, 0x00};
         m.insert(m.end(), pkg.begin(), pkg.begin() + SB_MANIFEST_LEN);
         write_file(std::string(dir) + "/manifest/valid_manifest.bin", m);
+        // fuzz_proof input = proof block + manifest.
+        Bytes pf(pkg.begin() + SB_MANIFEST_LEN, pkg.begin() + SB_HEADER_LEN);
+        pf.insert(pf.end(), pkg.begin(), pkg.begin() + SB_MANIFEST_LEN);
+        write_file(std::string(dir) + "/proof/valid_proof.bin", pf);
         std::printf("seed corpus written to %s\n", dir);
         std::exit(0);
     }
@@ -94,7 +100,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     Device &dev = h.dev;
     dev.restore(h.base);
 
-    const size_t max_pkg = SB_MANIFEST_LEN + dev.max_image();
+    const size_t max_pkg = SB_HEADER_LEN + dev.max_image();
     if (size > max_pkg) {
         size = max_pkg;
     }

@@ -101,11 +101,12 @@ Measured on this repository (WSL2, Ubuntu 22.04, clang 14 / GCC 11):
 | Fuzzing | 5 min each, no findings: parser 132,733 runs, full update path 8,239 runs (invariant: the device only ever boots an image the vendor signed) |
 | Valgrind | 0 errors, 0 leaks on the end-to-end scenarios |
 | Static analysis | clang-tidy (`bugprone`, `cert`, `clang-analyzer`, `performance`) clean on `boot/`, `hal/`, `tools/sim/` |
+| Code size | 4.8 KB of `.text` for the `boot/` core compiled with `-Os -mcpu=cortex-m3` (GCC 15.3, compile-only; Mbed TLS and the HAL are not included, nothing was linked or run on ARM). `sb_ctx_t` holds two 4 KiB sector buffers |
 | Coverage | 90.1 % lines, 73.7 % branches of `boot/` + `hal/` (remaining branches are mostly defensive error paths) |
 
 The fuzzing runs are short; they show the harness works, not that the code is exhaustively
-fuzzed. CI (`.github/workflows/ci.yml`) repeats the build, tests, Valgrind, clang-tidy and
-a 60 s fuzz run on every push.
+fuzzed. CI (`.github/workflows/ci.yml`) is configured to repeat the build, tests, Valgrind,
+clang-tidy and a 60 s fuzz run on every push; it has not run yet, so there is no badge.
 
 ## Layout
 
@@ -132,7 +133,7 @@ crypto library changes, `boot/crypto_port.c`.
 - Verified-then-executed images are not protected against a flash rewrite in between (TOCTOU).
 - One root key, no rotation or revocation. Static device key, so no forward secrecy toward the device.
 - An interrupted install is abandoned, not resumed; the package must be downloaded again.
-- Host simulator only: no Cortex-M port, no real flash timing, no measured code size.
+- Host simulator only: no Cortex-M port or linked firmware, no real flash timing; the code size above is a compile-only figure.
 - Not audited, not certified, not for production.
 
 ## License

@@ -83,5 +83,12 @@ requires the suite to fail; all 19 mutations are detected.
 - **The application can call confirm.** A compromised but validly signed application
   can confirm itself; the trial mechanism protects against faulty updates, not
   against a malicious vendor.
+- **The boot-state record is CRC-checked, not authenticated.** The in-scope adversary
+  who can write flash can forge it: switch the active slot, or mark an unconfirmed but
+  validly signed image CONFIRMED (which also lets `sb_boot` raise the OTP counter to
+  that image's counter). They still cannot make the device run unsigned code, code with
+  a counter below the OTP value, or a modified image, because signature, counter and
+  plaintext digest are re-verified from the slot contents on every boot. Authenticating
+  the record (MAC under a device-unique key) is future work.
 - **Not tested on hardware.** Everything runs on a host simulator. There is no
-  Cortex-M port yet.
+  Cortex-M port yet (the core compiles cleanly for Cortex-M3, but was never linked or run).

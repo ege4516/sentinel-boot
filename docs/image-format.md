@@ -33,7 +33,7 @@ The ciphertext follows at offset 248 and is exactly `image_size` bytes long.
 - **Image key.** The signer generates a fresh ephemeral P-256 key pair for every
   package and computes ECDH with the device public key. The shared secret is the
   raw 32-byte X coordinate. Then
-  `key = HKDF-SHA256(salt = empty, ikm = shared, info = "sentinel-boot/v1/image-key" \|\| eph_pub, L = 32)`.
+  `key = HKDF-SHA256(salt = empty, ikm = shared, info = "sentinel-boot/v1/image-key" || eph_pub, L = 32)`.
   A fresh key per package means the `(key, nonce)` pair can never repeat.
 - **Encryption.** AES-256-GCM with the 12-byte nonce. The associated data is
   `manifest[0:24]` (magic through key id), so the version, counter, size and key

@@ -1,5 +1,7 @@
 # sentinel-boot
 
+[![ci](https://github.com/ege4516/sentinel-boot/actions/workflows/ci.yml/badge.svg)](https://github.com/ege4516/sentinel-boot/actions/workflows/ci.yml)
+
 Secure boot and encrypted OTA update chain for Cortex-M class devices, written in C11.
 Signed and encrypted firmware packages, A/B slots with trial boots, power-fail-safe
 state handling, OTP-backed (simulated) anti-rollback, and a Merkle transparency log
@@ -143,8 +145,8 @@ Measured on this repository (WSL2, Ubuntu 22.04, clang 14 / GCC 11):
 | Coverage | 90.4 % lines, 74.3 % branches of `boot/` + `hal/` (remaining branches are mostly defensive error paths) |
 
 The fuzzing runs are short; they show the harness works, not that the code is exhaustively
-fuzzed. CI (`.github/workflows/ci.yml`) is configured to repeat the build, tests, Valgrind,
-clang-tidy and a 60 s fuzz run on every push; it has not run yet, so there is no badge.
+fuzzed. CI (`.github/workflows/ci.yml`) repeats the build, tests, Valgrind, clang-tidy, a 60 s fuzz
+run and the Cortex-M3 self-test on every push; the first run on GitHub passed all jobs.
 
 ## Layout
 

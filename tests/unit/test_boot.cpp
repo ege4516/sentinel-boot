@@ -323,6 +323,39 @@ TEST_F(Boot, CorruptedOnlyImageRefusesToBoot)
     EXPECT_EQ(dev->boot(&res), SB_ERR_NO_IMAGE);
 }
 
+TEST_F(Boot, NeverFallsBackToAnUnconfirmedSlot)
+{
+    // v2 never confirms and is reverted: its slot is INVALID but still holds
+    // a perfectly valid signed image. If the confirmed v1 is then damaged,
+    // the bootloader must not "rescue" itself by switching to that slot.
+    dev->install_confirmed(dev->package(kV1, 1, img1));
+    ASSERT_EQ(dev->stage(dev->package(kV2, 1, img2)), SB_OK);
+    for (unsigned i = 0; i <= SB_DEFAULT_TRIALS; i++) {
+        sb_boot_result_t res{};
+        ASSERT_EQ(dev->boot(&res), SB_OK);
+    }
+    sb_state_t st = dev->state();
+    ASSERT_EQ(st.slot[st.active ^ 1], SB_SLOT_INVALID);
+
+    dev->raw()[dev->image_off(st.active) + 99] ^= 0x01;
+    sb_boot_result_t res{};
+    EXPECT_EQ(dev->boot(&res), SB_ERR_NO_IMAGE);
+    EXPECT_EQ(dev->state().active, st.active) << "switched to a slot that was never confirmed";
+}
+
+TEST_F(Boot, StateRecordWithBadCrcIsIgnored)
+{
+    // Corrupt a field of the newest record so that it still looks plausible
+    // (trials_left 0 -> 1). Only the CRC can tell; the loader must discard
+    // the record and fall back to the previous one.
+    dev->install_confirmed(dev->package(kV1, 1, img1));
+    sb_state_t before = dev->state();
+    dev->raw()[dev->layout.state_off[before.copy] + 11] ^= 0x01;
+
+    sb_state_t after = dev->state();
+    EXPECT_LT(after.seq, before.seq);
+}
+
 TEST_F(Boot, TamperedManifestOfInstalledImageRefusesToBoot)
 {
     dev->install_confirmed(dev->package(kV1, 1, img1));
